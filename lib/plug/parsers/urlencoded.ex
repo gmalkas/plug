@@ -22,30 +22,31 @@ defmodule Plug.Parsers.URLENCODED do
 
   def init(opts) do
     opts = Keyword.put_new(opts, :length, 1_000_000)
-    Keyword.pop(opts, :body_reader, {Plug.Conn, :read_body, []})
+    Keyword.pop(opts, :body_reader, Plug.BodyReader.Deflate)
   end
 
-  def parse(conn, "application", "x-www-form-urlencoded", _headers, {{mod, fun, args}, opts}) do
-    case apply(mod, fun, [conn, opts | args]) do
-      {:ok, body, conn} ->
-        validate_utf8 = Keyword.get(opts, :validate_utf8, true)
+  def parse(conn, "application", "x-www-form-urlencoded", _headers, {body_reader, opts}) do
+    {:ok, conn} = body_reader.init(conn, opts)
 
-        {:ok,
-         Plug.Conn.Query.decode(
-           body,
-           %{},
-           Plug.Parsers.BadEncodingError,
-           validate_utf8
-         ), conn}
+    try do
+      case body_reader.read_body(conn, opts) do
+        {:ok, body, conn} ->
+          validate_utf8 = Keyword.get(opts, :validate_utf8, true)
 
-      {:more, _data, conn} ->
-        {:error, :too_large, conn}
+          {:ok, Plug.Conn.Query.decode(body, %{}, Plug.Parsers.BadEncodingError, validate_utf8),
+           conn}
 
-      {:error, :timeout} ->
-        raise Plug.TimeoutError
+        {:more, _data, conn} ->
+          {:error, :too_large, conn}
 
-      {:error, _} ->
-        raise Plug.BadRequestError
+        {:error, :timeout} ->
+          raise Plug.TimeoutError
+
+        {:error, _} ->
+          raise Plug.BadRequestError
+      end
+    after
+      body_reader.close(conn, opts)
     end
   end
 
