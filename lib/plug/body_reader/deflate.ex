@@ -40,10 +40,8 @@ defmodule Plug.BodyReader.Deflate do
   def read_body(%Plug.Conn{private: %{__MODULE__ => zlib_stream}} = conn, opts) do
     case Plug.Conn.read_body(conn, opts) do
       {read_status, body, conn} when read_status in [:ok, :more] ->
-        case :zlib.safeInflate(zlib_stream, body) do
-          {status, data} when status in [:continue, :finished] ->
-            {read_status, IO.iodata_to_binary(data), conn}
-        end
+        data = inflate(zlib_stream, body, [])
+        {read_status, IO.iodata_to_binary(data), conn}
 
       other ->
         other
@@ -61,4 +59,14 @@ defmodule Plug.BodyReader.Deflate do
 
   defp window_bits_for_encoding(:deflate), do: 15
   defp window_bits_for_encoding(:gzip), do: 47
+
+  defp inflate(zlib_stream, data, acc) do
+    case :zlib.safeInflate(zlib_stream, data) do
+      {:continue, output} ->
+        inflate(zlib_stream, [], [acc, output])
+
+      {:finished, output} ->
+        [acc, output]
+    end
+  end
 end
